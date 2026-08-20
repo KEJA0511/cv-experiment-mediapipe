@@ -21,10 +21,25 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from .hand_skeleton import records_to_array
+
 
 def _hand_features(hand: dict[str, Any]) -> tuple[np.ndarray, np.ndarray | None, float]:
     """Return wrist-relative, scale-normalized features for one hand."""
-    if not hand["present"] or len(hand["nodes"]) != 21:
+    if not hand["present"]:
+        return np.zeros(63, dtype=np.float32), None, 1.0
+
+    if hand.get("skeleton") is not None:
+        skeleton = hand["skeleton"]
+        canonical = records_to_array(skeleton["canonical_landmarks"])
+        image = records_to_array(skeleton["image_landmarks"])
+        if canonical is None or image is None:
+            return np.zeros(63, dtype=np.float32), None, 1.0
+        image_scale = float(np.linalg.norm(image[9] - image[0]))
+        return canonical.reshape(-1), image[0].copy(), max(image_scale, 1e-6)
+
+    # Schema 1.x compatibility for previously generated datasets.
+    if len(hand.get("nodes", [])) != 21:
         return np.zeros(63, dtype=np.float32), None, 1.0
 
     points = np.asarray(
@@ -189,7 +204,7 @@ def train_baseline(
         {
             "model": model,
             "classes": classes,
-            "feature_schema": "two_hand_wrist_relative_v1",
+            "feature_schema": "two_hand_canonical_skeleton_v2",
             "feature_count": int(x.shape[1]),
         },
         model_path,

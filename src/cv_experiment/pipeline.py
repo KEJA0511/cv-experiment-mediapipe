@@ -11,9 +11,17 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-from .skeleton import frame_from_result, make_document
+from .skeleton import SCHEMA_VERSION, frame_from_result, make_document
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def _has_current_schema(path: Path) -> bool:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return document.get("schema_version") == SCHEMA_VERSION
 
 
 class HandDetector:
@@ -49,7 +57,10 @@ class HandDetector:
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._detector.detect(mp_image)
         frame = frame_from_result(result, frame_index=0, timestamp_ms=0)
-        return make_document([frame], source=source)
+        source_metadata = dict(source)
+        source_metadata["width_px"] = int(image.shape[1])
+        source_metadata["height_px"] = int(image.shape[0])
+        return make_document([frame], source=source_metadata)
 
 
 def detect_image(image_path: Path, model_path: Path) -> dict[str, Any]:
@@ -102,15 +113,24 @@ def convert_dataset(
     elif limit is not None:
         images = images[:limit]
 
-    stats = {"found": len(images), "converted": 0, "skipped": 0, "no_hand": 0, "failed": 0}
+    stats = {
+        "found": len(images),
+        "converted": 0,
+        "upgraded": 0,
+        "skipped": 0,
+        "no_hand": 0,
+        "failed": 0,
+    }
     with HandDetector(model_path) as detector:
         for index, image_path in enumerate(images, start=1):
             relative_path = image_path.relative_to(input_dir)
             output_path = output_dir / relative_path.with_suffix(".json")
 
             if output_path.exists() and not overwrite:
-                stats["skipped"] += 1
-                continue
+                if _has_current_schema(output_path):
+                    stats["skipped"] += 1
+                    continue
+                stats["upgraded"] += 1
 
             label = relative_path.parts[0] if len(relative_path.parts) > 1 else None
             try:
