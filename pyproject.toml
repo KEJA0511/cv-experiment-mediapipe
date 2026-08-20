@@ -1,0 +1,24 @@
+[project]
+name = "cv-experiment"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Kejia Cao", email = "kcao0888@uni.sydney.edu.au" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "matplotlib>=3.11.1",
+    "mediapipe>=1.0.1",
+    "opencv-python>=5.0.0.93",
+    "scikit-learn>=1.9.0",
+]
+
+[project.scripts]
+cv-experiment = "cv_experiment:main"
+cv-train = "cv_experiment.training:main"
+cv-render-skeleton = "cv_experiment.render_skeleton:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
