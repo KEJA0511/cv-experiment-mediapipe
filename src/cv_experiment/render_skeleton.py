@@ -13,7 +13,8 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from .skeleton import EDGES
+from .hand_skeleton import records_to_array
+from .topology import BONES
 
 
 DEFAULT_POSE = np.asarray(
@@ -30,6 +31,16 @@ DEFAULT_POSE = np.asarray(
 
 
 def _detected_points(hand: dict[str, Any]) -> np.ndarray:
+    if hand.get("skeleton") is not None:
+        points = records_to_array(hand["skeleton"]["canonical_landmarks"])
+        if points is None:
+            raise ValueError("Detected hand has no canonical landmarks")
+        points = points.copy()
+        points[:, 1] *= -1
+        points[:, 2] *= -1
+        return points
+
+    # Schema 1.x compatibility.
     return np.asarray(
         [
             [
@@ -49,7 +60,25 @@ def bound_poses(document: dict[str, Any]) -> list[dict[str, Any]]:
     present = [hand for hand in hands if hand["present"]]
     detected = {hand["slot"]: _detected_points(hand) for hand in present}
 
-    if detected:
+    if detected and document.get("schema_version", "1").startswith("2"):
+        image_data = {}
+        for hand in present:
+            image = records_to_array(hand["skeleton"]["image_landmarks"])
+            if image is not None:
+                image_data[hand["slot"]] = image
+        if image_data:
+            wrists = np.stack([points[0, :2] for points in image_data.values()])
+            origin = wrists.mean(axis=0)
+            scales = [
+                float(np.linalg.norm(points[9, :2] - points[0, :2]))
+                for points in image_data.values()
+            ]
+            scale = max(float(np.mean(scales)), 1e-6)
+            for slot, image in image_data.items():
+                offset = (image[0, :2] - origin) / scale
+                detected[slot][:, 0] += offset[0]
+                detected[slot][:, 1] -= offset[1]
+    elif detected:
         wrists = np.stack([points[0] for points in detected.values()])
         origin = wrists.mean(axis=0)
         palm_scales = [
@@ -102,7 +131,7 @@ def render_document(document: dict[str, Any], output_path: Path) -> None:
             color = "#2563eb" if pose["slot"] == "Left" else "#dc2626"
             alpha = 1.0 if pose["present"] else 0.38
             line_style = "-" if pose["present"] else "--"
-            for start, end in EDGES:
+            for start, end in BONES:
                 segment = points[[start, end]]
                 axis.plot(
                     segment[:, 0], segment[:, 1], segment[:, 2],
