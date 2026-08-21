@@ -1,9 +1,9 @@
-"""In-memory representation of one MediaPipe hand skeleton."""
+"""Backend-neutral representation of one 21-point hand skeleton."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -40,6 +40,30 @@ class HandSkeleton:
 
     image_joints: np.ndarray
     world_joints: np.ndarray | None
+    world_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_arrays(
+        cls,
+        image_joints: np.ndarray,
+        spatial_joints: np.ndarray | None,
+        *,
+        spatial_metadata: Mapping[str, Any] | None = None,
+    ) -> "HandSkeleton":
+        """Bind backend output after validating the shared topology shape."""
+        image = np.asarray(image_joints, dtype=np.float32)
+        spatial = (
+            None
+            if spatial_joints is None
+            else np.asarray(spatial_joints, dtype=np.float32)
+        )
+        if image.shape != (21, 3):
+            raise ValueError(f"image_joints must have shape (21, 3), got {image.shape}")
+        if spatial is not None and spatial.shape != (21, 3):
+            raise ValueError(
+                f"spatial_joints must have shape (21, 3), got {spatial.shape}"
+            )
+        return cls(image, spatial, dict(spatial_metadata or {}))
 
     @classmethod
     def from_mediapipe(
@@ -51,7 +75,16 @@ class HandSkeleton:
         world = _points(world_landmarks)
         if image is None:
             raise ValueError("Image landmarks are required")
-        return cls(image_joints=image, world_joints=world)
+        return cls.from_arrays(
+            image,
+            world,
+            spatial_metadata={
+                "source": "mediapipe",
+                "type": "mediapipe_world",
+                "unit": "meter",
+                "equivalent_to_mediapipe_world": True,
+            },
+        )
 
     @property
     def canonical_source(self) -> str:
@@ -89,6 +122,7 @@ class HandSkeleton:
             "topology_id": TOPOLOGY_ID,
             "image_landmarks": _records(self.image_joints),
             "world_landmarks": _records(self.world_joints),
+            "world_landmarks_metadata": dict(self.world_metadata),
             "canonical_landmarks": _records(self.canonical_joints),
             "normalization": {
                 "source": self.canonical_source,

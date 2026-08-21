@@ -8,6 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+.venv310/
+.venv314_archive/
 .uv-cache/
 
 # Generated experiment data

@@ -1,4 +1,4 @@
-"""MediaPipe inference entry points for the CV experiment."""
+"""Backend-selectable inference entry points for the CV experiment."""
 
 from __future__ import annotations
 
@@ -7,11 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
 
-from .skeleton import SCHEMA_VERSION, frame_from_result, make_document
+from .estimators import Hand3DEstimator, HaMeREstimator, MediaPipeEstimator
+from .skeleton import SCHEMA_VERSION, frame_from_estimation, make_document
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -25,22 +23,27 @@ def _has_current_schema(path: Path) -> bool:
 
 
 class HandDetector:
-    """A reusable MediaPipe detector suitable for large image datasets."""
+    """Backward-compatible reusable wrapper around a selected estimator."""
 
-    def __init__(self, model_path: Path) -> None:
-        if not model_path.is_file():
-            raise FileNotFoundError(f"Could not find model: {model_path}")
-
-        options = vision.HandLandmarkerOptions(
-            base_options=python.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=vision.RunningMode.IMAGE,
-            num_hands=2,
-            min_hand_detection_confidence=0.3,
+    def __init__(
+        self,
+        model_path: Path,
+        *,
+        backend: str = "mediapipe",
+        hamer_root: Path | None = None,
+        hamer_checkpoint: Path | None = None,
+        device: str = "cuda",
+    ) -> None:
+        self._estimator = create_estimator(
+            backend,
+            model_path=model_path,
+            hamer_root=hamer_root,
+            hamer_checkpoint=hamer_checkpoint,
+            device=device,
         )
-        self._detector = vision.HandLandmarker.create_from_options(options)
 
     def close(self) -> None:
-        self._detector.close()
+        self._estimator.close()
 
     def __enter__(self) -> "HandDetector":
         return self
@@ -54,18 +57,60 @@ class HandDetector:
             raise ValueError(f"Could not read image: {image_path}")
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = self._detector.detect(mp_image)
-        frame = frame_from_result(result, frame_index=0, timestamp_ms=0)
+        result = self._estimator.estimate(rgb)
+        frame = frame_from_estimation(result, frame_index=0, timestamp_ms=0)
         source_metadata = dict(source)
         source_metadata["width_px"] = int(image.shape[1])
         source_metadata["height_px"] = int(image.shape[0])
-        return make_document([frame], source=source_metadata)
+        estimator_metadata = dict(result.estimator_metadata)
+        estimator_metadata["inference_time_ms"] = result.inference_time_ms
+        return make_document(
+            [frame], source=source_metadata, estimator=estimator_metadata
+        )
 
 
-def detect_image(image_path: Path, model_path: Path) -> dict[str, Any]:
+def create_estimator(
+    backend: str,
+    *,
+    model_path: Path,
+    hamer_root: Path | None = None,
+    hamer_checkpoint: Path | None = None,
+    device: str = "cuda",
+) -> Hand3DEstimator:
+    """Create an estimator without importing optional HaMeR dependencies early."""
+    if backend == "mediapipe":
+        return MediaPipeEstimator(model_path)
+    if backend == "hamer":
+        if hamer_root is None or hamer_checkpoint is None:
+            raise ValueError(
+                "--backend hamer requires --hamer-root and --hamer-checkpoint"
+            )
+        return HaMeREstimator(
+            model_path,
+            hamer_root=hamer_root,
+            checkpoint_path=hamer_checkpoint,
+            device=device,
+        )
+    raise ValueError(f"Unknown backend: {backend}")
+
+
+def detect_image(
+    image_path: Path,
+    model_path: Path,
+    *,
+    backend: str = "mediapipe",
+    hamer_root: Path | None = None,
+    hamer_checkpoint: Path | None = None,
+    device: str = "cuda",
+) -> dict[str, Any]:
     """Detect hands in one image and return a JSON-serializable document."""
-    with HandDetector(model_path) as detector:
+    with HandDetector(
+        model_path,
+        backend=backend,
+        hamer_root=hamer_root,
+        hamer_checkpoint=hamer_checkpoint,
+        device=device,
+    ) as detector:
         return detector.detect(
             image_path,
             source={"type": "image", "path": image_path.as_posix()},
@@ -89,6 +134,10 @@ def convert_dataset(
     limit: int | None = None,
     limit_per_class: int | None = None,
     overwrite: bool = False,
+    backend: str = "mediapipe",
+    hamer_root: Path | None = None,
+    hamer_checkpoint: Path | None = None,
+    device: str = "cuda",
 ) -> dict[str, int]:
     """Convert a labelled image directory while preserving its structure."""
     if not input_dir.is_dir():
@@ -121,7 +170,13 @@ def convert_dataset(
         "no_hand": 0,
         "failed": 0,
     }
-    with HandDetector(model_path) as detector:
+    with HandDetector(
+        model_path,
+        backend=backend,
+        hamer_root=hamer_root,
+        hamer_checkpoint=hamer_checkpoint,
+        device=device,
+    ) as detector:
         for index, image_path in enumerate(images, start=1):
             relative_path = image_path.relative_to(input_dir)
             output_path = output_dir / relative_path.with_suffix(".json")

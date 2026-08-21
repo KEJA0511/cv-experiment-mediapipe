@@ -8,14 +8,35 @@ from .pipeline import convert_dataset, detect_image, write_json
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert MediaPipe hand landmarks to skeleton JSON."
+        description="Convert hand estimates to shared 21-point skeleton JSON."
     )
     parser.add_argument("input", type=Path, help="input image or dataset directory")
+    parser.add_argument(
+        "--backend",
+        choices=("mediapipe", "hamer"),
+        default="mediapipe",
+        help="3D estimator backend (default: mediapipe)",
+    )
     parser.add_argument(
         "--model",
         type=Path,
         default=Path("hand_landmarker.task"),
         help="MediaPipe .task model path (default: hand_landmarker.task)",
+    )
+    parser.add_argument(
+        "--hamer-root",
+        type=Path,
+        help="official HaMeR repository root (required for HaMeR)",
+    )
+    parser.add_argument(
+        "--hamer-checkpoint",
+        type=Path,
+        help="official pretrained HaMeR checkpoint (required for HaMeR)",
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda",
+        help="HaMeR torch device, e.g. cuda or cpu (default: cuda)",
     )
     parser.add_argument(
         "--output",
@@ -49,6 +70,10 @@ def main() -> None:
             limit=args.limit,
             limit_per_class=args.limit_per_class,
             overwrite=args.overwrite,
+            backend=args.backend,
+            hamer_root=args.hamer_root,
+            hamer_checkpoint=args.hamer_checkpoint,
+            device=args.device,
         )
         print("Dataset conversion complete:")
         for name, value in stats.items():
@@ -57,7 +82,14 @@ def main() -> None:
         return
 
     output_path = args.output or Path("output/hand_skeleton.json")
-    document = detect_image(args.input, args.model)
+    document = detect_image(
+        args.input,
+        args.model,
+        backend=args.backend,
+        hamer_root=args.hamer_root,
+        hamer_checkpoint=args.hamer_checkpoint,
+        device=args.device,
+    )
     write_json(document, output_path)
 
     hand_count = sum(

@@ -1,6 +1,6 @@
 # CV Experiment
 
-MediaPipe hand detections are converted to schema-v2 JSON. Each document stores
+MediaPipe or optional official HaMeR hand estimates are converted to schema-v2 JSON. Each document stores
 the fixed `mediapipe_hand_21` graph once, then binds every detected hand to it
 with image, world and canonical landmark coordinates.
 
@@ -62,3 +62,11 @@ uv run cv-render-skeleton output/schema_v2/A0.json `
 
 Detected hands use their MediaPipe nodes. A missing hand is rendered as a
 transparent dashed neutral pose, proving that both renderer slots remain bound.
+
+## Optional HaMeR 3D backend
+
+Select `--backend hamer` to keep MediaPipe as the 2D detector while using the
+official pretrained HaMeR model for 3D reconstruction. The output still uses
+the same `mediapipe_hand_21` topology, JSON v2 normalization, validation,
+renderer and training features. See [docs/HAMER_SETUP.md](docs/HAMER_SETUP.md)
+for the isolated environment, checkpoint and licensed MANO asset requirements.
